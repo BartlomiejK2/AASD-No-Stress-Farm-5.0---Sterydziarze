@@ -1,37 +1,63 @@
-import os
-import asyncio
 import spade
 from spade.agent import Agent
-from spade.behaviour import OneShotBehaviour
-from spade import wait_until_finished
+from spade.behaviour import CyclicBehaviour, OneShotBehaviour
+from spade.message import Message
+from spade.template import Template
+from numpy import random
+import time
 
-
-class HelloAgent(Agent):
-    class HelloBehaviour(OneShotBehaviour):
+class SensorAgent(Agent):
+    class InformBehav(CyclicBehaviour):
         async def run(self):
-            print("Hello from SPADE in Docker!")
-            await asyncio.sleep(1)
-            print("Behaviour finished.")
-            await self.agent.stop()
+            print("InformBehav running")
+            msg = Message(to="aggregator@localhost")     # Instantiate the message
+            msg.set_metadata("performative", "inform")  # Set the "inform" FIPA performative
+            x = random.normal(size=(1))
+            msg.body = str(x[0])                         # Set the message content
+
+            await self.send(msg)
+            print(f"Message: {msg.body} sent!")
+            time.sleep(1.0)
 
     async def setup(self):
-        print("Agent setup complete.")
-        self.add_behaviour(self.HelloBehaviour())
+        print("SensorAgent started")
+        b = self.InformBehav()
+        self.add_behaviour(b)
+
+class AggregatorAgent(Agent):
+    class RecvBehav(CyclicBehaviour):
+        async def run(self):
+
+            msg = await self.receive(timeout=10) # wait for a message for 10 seconds
+            if msg:
+                print("Message received with content: {}".format(msg.body))
+                self.data.append(msg.body)
+                print(f"Data stored: {self.data}")
+            else:
+                print("Did not received any message after 10 seconds")
+
+    async def setup(self):
+        print("AggregatorAgent started")
+        self.data = []
+        b = self.RecvBehav()
+        template = Template()
+        template.set_metadata("performative", "inform")
+        self.add_behaviour(b, template)
+
 
 
 async def main():
-    jid = os.getenv("SPADE_JID", "agent@server_hello")
-    password = os.getenv("SPADE_PASSWORD", "secret")
+    aggregatoragent = AggregatorAgent("aggregator@localhost", "aggregator_password")
+    await aggregatoragent.start(auto_register=True)
+    print("Aggregator started")
 
-    agent = HelloAgent(jid, password)
-    await agent.start(auto_register=True)
-    print(f"Agent started as {jid}")
+    sensoragent = SensorAgent("sensor@localhost", "sensor_password")
+    await sensoragent.start(auto_register=True)
+    print("Sensor started")
 
-    # czekamy, aż agent się zakończy (stop jest wołane w Behaviour.run)
-    await wait_until_finished(agent)
-    print("Agent stopped.")
+    await spade.wait_until_finished(aggregatoragent)
+    print("Agents finished")
 
 
 if __name__ == "__main__":
-    # UŻYWAMY spade.run zamiast asyncio.run
     spade.run(main())
