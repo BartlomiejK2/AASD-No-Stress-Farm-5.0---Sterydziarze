@@ -1,0 +1,50 @@
+services:
+  xmpp_server:
+    image: tigase/tigase-xmpp-server:8.0.0
+    container_name: xmpp_server
+    ports:
+      - "8480:8080"   # panel HTTP
+      - "5422:5222"   # XMPP na hosta, ale wewnątrz sieci dalej 5222
+    environment:
+      - DB_ROOT_USER=admin
+      - DB_ROOT_PASS=admin
+      - ADMIN_JID=admin@localhost
+      - ADMIN_PASSWORD=admin
+    volumes:
+      - ./tigase/config/tigase.conf:/home/tigase/tigase-server/etc/tigase.conf
+      - ./tigase/config/config.tdsl:/home/tigase/tigase-server/etc/config.tdsl
+
+  analyzer:
+    build: ./analysis
+    container_name: analyzer
+    depends_on:
+      - xmpp_server
+    environment:
+      - PASSWORD=secret
+
+  mucka:
+    build: ./cow
+    container_name: mucka
+    depends_on:
+      - xmpp_server
+    environment:
+      - NAME=mucka
+      - PASSWORD=secret
+
+  krasula:
+    build: ./cow
+    container_name: krasula
+    depends_on:
+      - xmpp_server
+    environment:
+      - NAME=krasula
+      - PASSWORD=secret
+
+  zosia:
+    build: ./cow
+    container_name: zosia
+    depends_on:
+      - xmpp_server
+    environment:
+      - NAME=zosia
+      - PASSWORD=secret

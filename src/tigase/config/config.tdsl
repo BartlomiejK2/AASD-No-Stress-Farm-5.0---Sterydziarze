@@ -1,9 +1,9 @@
 admins = [
-    'admin@server_hello'
+    'admin@xmpp_server'
 ]
 'config-type' = 'default'
 debug = [ 'server' ]
-'default-virtual-host' = 'server_hello'
+'default-virtual-host' = 'xmpp_server'
 dataSource () {
     default () {
         uri = 'jdbc:derby:derby;create=true'
