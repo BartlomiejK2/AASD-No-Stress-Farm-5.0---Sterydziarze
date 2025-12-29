@@ -13,6 +13,9 @@ async def main():
     await spacial_analyser.start(auto_register=True)
     print("spacial_analyser started")
 
+    with open("/tmp/agent_ready", "w") as f:
+        f.write("ready")
+
     await spade.wait_until_finished(cows_analyser)
     print("Agents finished")
 

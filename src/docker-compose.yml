@@ -21,57 +21,87 @@ services:
       - xmpp_server
     environment:
       - PASSWORD=secret
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/agent_ready"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
 
   mucka:
     build: ./cow
     container_name: mucka
     depends_on:
-      - xmpp_server
+      analyzer:
+        condition: service_healthy
     environment:
       - NAME=mucka
       - PASSWORD=secret
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/agent_ready"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
 
   krasula:
     build: ./cow
     container_name: krasula
     depends_on:
-      - xmpp_server
+      mucka:
+        condition: service_healthy
     environment:
       - NAME=krasula
       - PASSWORD=secret
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/agent_ready"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
 
   zosia:
     build: ./cow
     container_name: zosia
     depends_on:
-      - xmpp_server
+      krasula:
+        condition: service_healthy
     environment:
       - NAME=zosia
       - PASSWORD=secret
-      - DELAY=15
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/agent_ready"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
 
   obora1:
     build: ./space
     container_name: obora1
     depends_on:
-      - xmpp_server
-      - zosia
+      zosia:
+        condition: service_healthy
     environment:
       - PASSWORD=secret
       - NAME=obora1
       - POSITION_X=0
       - POSITION_Y=0
-      - DELAY=20
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/agent_ready"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
 
   obora2:
     build: ./space
     container_name: obora2
     depends_on:
-      - xmpp_server
-      - obora1
+      obora1:
+        condition: service_healthy
     environment:
       - PASSWORD=secret
       - NAME=obora2
       - POSITION_X=10
       - POSITION_Y=10
-      - DELAY=25
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/agent_ready"]
+      interval: 3s
+      timeout: 2s
+      retries: 20

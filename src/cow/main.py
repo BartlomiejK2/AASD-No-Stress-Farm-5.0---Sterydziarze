@@ -23,6 +23,9 @@ async def main():
     pulse_sensor = PulseSensor()
     await pulse_sensor.start(auto_register=True)
 
+    with open("/tmp/agent_ready", "w") as f:
+        f.write("ready")
+
     await spade.wait_until_finished(aggregator_agent)
     print("Agents finished")
 
