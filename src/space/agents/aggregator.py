@@ -9,8 +9,11 @@ from spade.message import Message
 
 class Aggregator(Agent):
     def __init__(self):
-        self.cow_name = os.getenv("NAME")
-        super().__init__(f"aggregator-{self.cow_name}@xmpp_server", os.getenv("PASSWORD"))
+        self.space_name = os.getenv("NAME")
+        self.position_x = os.getenv("POSITION_X")
+        self.position_y = os.getenv("POSITION_Y")
+
+        super().__init__(f"aggregator-{self.space_name}@xmpp_server", os.getenv("PASSWORD"))
         self.data = {}
 
     class AggregateData(CyclicBehaviour):
@@ -19,7 +22,7 @@ class Aggregator(Agent):
             self.data_aggregator = data_aggregator
 
         async def run(self):
-            message = await self.receive(timeout=3)
+            message = await self.receive(timeout=15)
 
             if message:
                 data = json.loads(message.body)
@@ -33,7 +36,7 @@ class Aggregator(Agent):
             self.profile = profile
 
         async def run(self):
-            message = Message(to="cows-analyzer@xmpp_server", body=json.dumps(self.profile))
+            message = Message(to="spacial-analyzer@xmpp_server", body=json.dumps(self.profile))
             message.set_metadata("performative", "inform")
             await self.send(message)
 
@@ -47,9 +50,13 @@ class Aggregator(Agent):
             self.forward_profile()
 
     def is_profile_ready(self):
-        return all(key in self.data.keys() for key in ('temperature', 'pH', 'activity', 'pulse'))
+        return all(key in self.data.keys() for key in ('temperature', 'humidity'))
 
     def forward_profile(self):
-        behaviour = self.ForwardProfile(profile={self.cow_name: copy(self.data)})
+        data_to_send = self.data | {
+            'position_x': self.position_x,
+            'position_y': self.position_y
+        }
+        behaviour = self.ForwardProfile(profile={self.space_name: data_to_send})
         self.add_behaviour(behaviour)
         self.data.clear()

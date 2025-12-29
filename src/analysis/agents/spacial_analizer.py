@@ -5,9 +5,9 @@ from spade.agent import Agent
 from spade.behaviour import CyclicBehaviour
 
 
-class CowsAnalyzer(Agent):
+class SpacialAnalyzer(Agent):
     def __init__(self):
-        super().__init__(f"cows-analyzer@xmpp_server", os.getenv("PASSWORD"))
+        super().__init__(f"spacial-analyzer@xmpp_server", os.getenv("PASSWORD"))
         self.data = {}
 
     class CollectProfilesData(CyclicBehaviour):
@@ -16,7 +16,7 @@ class CowsAnalyzer(Agent):
             self.data_collector = data_collector
 
         async def run(self):
-            message = await self.receive(timeout=10)
+            message = await self.receive(timeout=20)
 
             if message:
                 data = json.loads(message.body)
@@ -33,4 +33,4 @@ class CowsAnalyzer(Agent):
         self.analyse_data()
 
     def analyse_data(self):
-        print(f"analyse cows data: {self.data}")
+        print(f"analyse space data: {self.data}")

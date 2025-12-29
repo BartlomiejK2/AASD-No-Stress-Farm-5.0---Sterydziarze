@@ -48,3 +48,30 @@ services:
     environment:
       - NAME=zosia
       - PASSWORD=secret
+      - DELAY=15
+
+  obora1:
+    build: ./space
+    container_name: obora1
+    depends_on:
+      - xmpp_server
+      - zosia
+    environment:
+      - PASSWORD=secret
+      - NAME=obora1
+      - POSITION_X=0
+      - POSITION_Y=0
+      - DELAY=20
+
+  obora2:
+    build: ./space
+    container_name: obora2
+    depends_on:
+      - xmpp_server
+      - obora1
+    environment:
+      - PASSWORD=secret
+      - NAME=obora2
+      - POSITION_X=10
+      - POSITION_Y=10
+      - DELAY=25
