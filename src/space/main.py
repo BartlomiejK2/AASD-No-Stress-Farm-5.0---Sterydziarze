@@ -2,6 +2,7 @@ import spade
 from agents.aggregator import Aggregator
 from agents.temperature_sensor import TemperatureSensor
 from agents.humidity_sensor import HumiditySensor
+from agents.air_conditioner_effector import AirConditionerEffector
 
 
 async def main():
@@ -14,6 +15,9 @@ async def main():
 
     humidity_sensor = HumiditySensor()
     await humidity_sensor.start(auto_register=True)
+
+    air_conditioner = AirConditionerEffector()
+    await air_conditioner.start(auto_register=True)
 
     with open("/tmp/agent_ready", "w") as f:
         f.write("ready")

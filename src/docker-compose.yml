@@ -36,6 +36,8 @@ services:
     environment:
       - NAME=mucka
       - PASSWORD=secret
+      - SUCCES_RATE=0.8
+      - SLEEP_TIME=2.5
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/agent_ready"]
       interval: 3s
@@ -51,6 +53,8 @@ services:
     environment:
       - NAME=krasula
       - PASSWORD=secret
+      - SUCCES_RATE=0.8
+      - SLEEP_TIME=2.5
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/agent_ready"]
       interval: 3s
@@ -66,6 +70,8 @@ services:
     environment:
       - NAME=zosia
       - PASSWORD=secret
+      - SUCCES_RATE=0.8
+      - SLEEP_TIME=2.5
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/agent_ready"]
       interval: 3s
@@ -83,6 +89,8 @@ services:
       - NAME=obora1
       - POSITION_X=0
       - POSITION_Y=0
+      - SUCCES_RATE=0.8
+      - SLEEP_TIME=2.5
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/agent_ready"]
       interval: 3s
@@ -100,6 +108,8 @@ services:
       - NAME=obora2
       - POSITION_X=10
       - POSITION_Y=10
+      - SUCCES_RATE=0.8
+      - SLEEP_TIME=2.5
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/agent_ready"]
       interval: 3s

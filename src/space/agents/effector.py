@@ -10,12 +10,13 @@ from spade.message import Message
 
 class Effector(Agent):
     def __init__(self, type: str):
-        self.cow_name = os.getenv("NAME")
+        self.position_x = os.getenv("POSITION_X")
+        self.position_y = os.getenv("POSITION_Y")
         self.succes_rate = float(os.getenv("SUCCES_RATE"))
         self.sleep_time = float(os.getenv("SLEEP_TIME"))
         self.free = True
         self.value = None
-        super().__init__(f"effector-{type}-{self.cow_name}@xmpp_server", os.getenv("PASSWORD"))
+        super().__init__(f"effector-{type}-{self.position_x}-{self.position_y}@xmpp_server", os.getenv("PASSWORD"))
 
     class GetRequest(CyclicBehaviour):
         def __init__(self, callback, jid):
