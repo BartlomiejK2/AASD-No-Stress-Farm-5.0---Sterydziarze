@@ -1,8 +1,12 @@
 import spade
 
 from agents.cows_analizer import CowsAnalyzer
+<<<<<<< HEAD:src/analysis/main.py
 from agents.spacial_analizer import SpacialAnalyzer
 
+=======
+from spatial_analysis.spatial_analizer import SpatialAnalyzer
+>>>>>>> b90fe2c (analizator krow + przestrzenny):src/cow_analysis/main.py
 
 async def main():
     cows_analyser = CowsAnalyzer()
@@ -18,6 +22,7 @@ async def main():
 
     await spade.wait_until_finished(cows_analyser)
     print("Agents finished")
+
 
 
 if __name__ == "__main__":

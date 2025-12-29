@@ -34,13 +34,12 @@ class CowsAnalyzer(Agent):
                 return
             
             message_data = json.loads(message.body)
-            self.agent.save_profile(message_data)
+            await self.agent.save_profile(message_data)
 
             print(f"Message {message_data}")
         
     class AnalyzeProfiles(CyclicBehaviour):
-        def __init__(self):
-            super().__init__()
+        async def on_start(self):
             self.rules = [
                 FeverAnalysis(),
                 StressAnalysis(),
@@ -52,7 +51,7 @@ class CowsAnalyzer(Agent):
             event_type = event["type"]
 
             if event_type == "PROFILE_UPDATED":
-                self.handle_profile_update(event)
+                await self.handle_profile_update(event)
 
             elif event_type == "EFFECTOR_REQUEST":
                 await self.handle_effector_request(event)
@@ -93,21 +92,21 @@ class CowsAnalyzer(Agent):
 
 
     async def save_profile(self, message_data):
-        for cow_name, sensors in message_data:
+        for cow_name, sensors in message_data.items():
             profile = {
                 "timestamp": datetime.utcnow().isoformat(),
                 "sensors": sensors
             }
             self.data["cows"]["current"][cow_name] = profile
             self.data["cows"]["history"].setdefault(cow_name, []).append(profile)
-            await self.agent.events.put({
+            await self.events.put({
                 "type": "PROFILE_UPDATED",
-                "cow": cow_name
+                "cow_name": cow_name
                 })
 
     async def setup(self) -> None:
-        self.add_behaviour(self.DataReceiverBehaviour())
-        self.add_behaviour(self.AnalyzeDataBehaviour())
+        self.add_behaviour(self.AwaitProfilesBehavoiur())
+        self.add_behaviour(self.AnalyzeProfiles())
 
 class EffectorConversation(OneShotBehaviour):
 
@@ -122,10 +121,8 @@ class EffectorConversation(OneShotBehaviour):
         self.farmer_jid = "farmer@xmpp_server"
 
     async def run(self):
-        # 1. REQUEST
         await self.send_request()
 
-        # 2. Czekamy na AGREE / REFUSE
         reply = await self.wait_for_reply(timeout=10)
 
         if not reply:
@@ -142,7 +139,6 @@ class EffectorConversation(OneShotBehaviour):
             await self.inform_farmer("UNEXPECTED_REPLY", reply.body)
             return
 
-        # 3. Czekamy na DONE / RESULT / FAILURE
         final = await self.wait_for_reply(timeout=20)
 
         if not final:
@@ -181,8 +177,15 @@ class EffectorConversation(OneShotBehaviour):
 
 
     async def wait_for_reply(self, timeout):
-        template = Template(sender=self.effector_jid)
-        return await self.receive(template=template, timeout=timeout)
+        msg = await self.receive(timeout=timeout)
+
+        if not msg:
+            return None
+
+        if str(msg.sender) != self.effector_jid:
+            return None
+
+        return msg
     
 
     async def inform_farmer(self, status, details=None):
@@ -228,7 +231,7 @@ class FeverAnalysis(AnalysisRule):
             return {
                 "type": "EFFECTOR_REQUEST",
                 "cow_name": cow_name,
-                "effector": "zraszacz",
+                "effector": "sprinkler",
                 "reason": "fever"
             }
 
@@ -252,7 +255,7 @@ class StressAnalysis(AnalysisRule):
             return {
                 "type": "EFFECTOR_REQUEST",
                 "cow_name": cow_name,
-                "effector": "szczotki",
+                "effector": "brush",
                 "reason": "stress"
             }
 
@@ -272,7 +275,7 @@ class HungerAnalysis(AnalysisRule):
             return {
                 "type": "EFFECTOR_REQUEST",
                 "cow_name": cow_name,
-                "effector": "podajnikPaszy",
+                "effector": "feeder",
                 "reason": "hunger"
             }
 
