@@ -27,6 +27,9 @@ class Effector(Agent):
             message = await self.receive(timeout=10)
 
             if message:
+                if message.get_metadata("performative") != "request":
+                    return
+                print(f"[{self.jid}]: Received request from {message.sender}")
                 self.callback(message)
             else:
                 print(f"[{self.jid}]: Did not received any request")
@@ -37,9 +40,14 @@ class Effector(Agent):
             self.message = message
 
         async def run(self):
-            message = Message(to = message.sender, body="")
-            message.set_metadata("performative", "refuse")
-            await self.send(message)
+            reply = Message(to=self.message.sender)
+            reply.set_metadata("performative", "refuse")
+            reply.set_metadata(
+                "conversation-id",
+                self.message.get_metadata("conversation-id")
+            )
+            await self.send(reply)
+
 
     class AcceptRequest(OneShotBehaviour):
         def __init__(self, message):
@@ -47,9 +55,14 @@ class Effector(Agent):
             self.message = message
 
         async def run(self):
-            message = Message(to = message.sender, body="")
-            message.set_metadata("performative", "agree")
-            await self.send(message)
+            reply = Message(to=self.message.sender)
+            reply.set_metadata("performative", "agree")
+            reply.set_metadata(
+                "conversation-id",
+                self.message.get_metadata("conversation-id")
+            )
+            await self.send(reply)
+
     
     class FailureInform(OneShotBehaviour):
         def __init__(self, message):
@@ -57,9 +70,14 @@ class Effector(Agent):
             self.message = message
 
         async def run(self):
-            message = Message(to = message.sender, body="")
-            message.set_metadata("performative", "failure")
-            await self.send(message)
+            reply = Message(to=self.message.sender)
+            reply.set_metadata("performative", "failure")
+            reply.set_metadata(
+                "conversation-id",
+                self.message.get_metadata("conversation-id")
+            )
+            await self.send(reply)
+
 
     class SuccessDataInform(OneShotBehaviour):
         def __init__(self, message, data):
@@ -68,9 +86,17 @@ class Effector(Agent):
             self.data = data
 
         async def run(self):
-            message = Message(to = message.sender, body = json.dumps(self.data))
-            message.set_metadata("performative", "done")
-            await self.send(message)
+            reply = Message(
+                to=self.message.sender,
+                body=json.dumps(self.data)
+            )
+            reply.set_metadata("performative", "done")
+            reply.set_metadata(
+                "conversation-id",
+                self.message.get_metadata("conversation-id")
+            )
+            await self.send(reply)
+
 
     class ActionRunner(OneShotBehaviour):
         def __init__(self, message, take_action, sleep_time):
@@ -112,7 +138,7 @@ class Effector(Agent):
             if self.run_action(message, self.action, self.sleep_time):
                 self.done(message)
             else:
-                self.fail()
+                self.fail(message)
         self.free = True
 
     def action(self, body):

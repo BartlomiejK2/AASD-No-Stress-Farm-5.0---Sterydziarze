@@ -22,6 +22,11 @@ services:
     environment:
       - NAME=cow_analyzer
       - PASSWORD=secret
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/agent_ready"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
 
   spatial_analyzer:
     build: ./spatial_analysis
@@ -41,7 +46,7 @@ services:
     build: ./cow
     container_name: mucka
     depends_on:
-      analyzer:
+      cow_analyzer:
         condition: service_healthy
     environment:
       - NAME=mucka

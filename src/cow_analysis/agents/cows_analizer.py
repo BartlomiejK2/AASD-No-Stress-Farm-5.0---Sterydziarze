@@ -1,29 +1,29 @@
 import json
 import os
-from datetime import datetime
-
+from datetime import datetime, timedelta
+import time
 from spade.agent import Agent
 from spade.behaviour import CyclicBehaviour
 from spade.behaviour import OneShotBehaviour
-
+import uuid
 from spade.message import Message
 from spade.template import Template
+from spade.behaviour import PeriodicBehaviour
 
 import json
 from datetime import datetime
 import asyncio
 
-HISTORY_DEPTH = 3
+HISTORY_DEPTH = 1
 
 class CowsAnalyzer(Agent):
     def __init__(self):
-        super().__init__(f"analyzer@xmpp_server", os.getenv("PASSWORD"))
+        super().__init__(f"cows-analyzer@xmpp_server", os.getenv("PASSWORD"))
         self.data = {
             "cows": {
                 "current": {},
                 "history": {}
-            },
-            "anomalies": {},
+            }
         }
         self.events = asyncio.Queue()
 
@@ -33,15 +33,24 @@ class CowsAnalyzer(Agent):
             if not message:
                 return
             
+            sender = str(message.sender)
+
+            if not sender.startswith("aggregator-"):
+                return
+
+            if message.get_metadata("performative") != "inform":
+                return
+
             message_data = json.loads(message.body)
             await self.agent.save_profile(message_data)
 
-            print(f"Message {message_data}")
+            # print(f"Message {message_data}")
         
     class AnalyzeProfiles(CyclicBehaviour):
         async def on_start(self):
             self.rules = [
                 FeverAnalysis(),
+                OverheatingAnalysis(),
                 StressAnalysis(),
                 HungerAnalysis()
             ]
@@ -52,12 +61,11 @@ class CowsAnalyzer(Agent):
 
             if event_type == "PROFILE_UPDATED":
                 await self.handle_profile_update(event)
+                return
 
             elif event_type == "EFFECTOR_REQUEST":
                 await self.handle_effector_request(event)
-
-            elif event_type == "EFFECTOR_DONE":
-                await self.handle_effector_done(event)
+                return
 
 
         async def handle_profile_update(self, event):
@@ -72,17 +80,37 @@ class CowsAnalyzer(Agent):
         async def handle_effector_request(self, event):
             cow_name = event["cow_name"]
             effector = event["effector"]
-            action_param = event.get("action_param")
+            turn_on = event.get("turn_on")
             reason = event.get("reason", "unknown")
 
             conversation = EffectorConversation(
                 cow_name=cow_name,
                 effector=effector,
-                action=action_param,
+                turn_on=turn_on,
                 reason=reason
             )
 
-            self.agent.add_behaviour(conversation)
+
+            t_agree = Template(sender=conversation.effector_jid)
+            t_agree.set_metadata("conversation-id", conversation.conversation_id)
+            t_agree.set_metadata("performative", "agree")
+
+            t_refuse = Template(sender=conversation.effector_jid)
+            t_refuse.set_metadata("conversation-id", conversation.conversation_id)
+            t_refuse.set_metadata("performative", "refuse")
+
+            t_done = Template(sender=conversation.effector_jid)
+            t_done.set_metadata("conversation-id", conversation.conversation_id)
+            t_done.set_metadata("performative", "done")
+
+            t_failure = Template(sender=conversation.effector_jid)
+            t_failure.set_metadata("conversation-id", conversation.conversation_id)
+            t_failure.set_metadata("performative", "failure")
+
+            template = t_agree | t_refuse | t_done | t_failure
+
+            self.agent.add_behaviour(conversation, template)
+
 
             print(
                 f"[Analyzer] EffectorConversation started "
@@ -105,25 +133,36 @@ class CowsAnalyzer(Agent):
                 })
 
     async def setup(self) -> None:
-        self.add_behaviour(self.AwaitProfilesBehavoiur())
+        template = Template()
+        # template.sender = "aggregator-*@xmpp_server"
+        template.set_metadata("performative", "inform")
+
+        self.add_behaviour(self.AwaitProfilesBehavoiur(), template)
         self.add_behaviour(self.AnalyzeProfiles())
+        # report_behaviour = PeriodicReportBehaviour(period=21600)
+        report_behaviour = PeriodicReportBehaviour(period=10)
+        self.add_behaviour(report_behaviour)
 
 class EffectorConversation(OneShotBehaviour):
 
-    def __init__(self, cow_name, effector, action, reason):
+    def __init__(self, cow_name, effector, turn_on, reason):
         super().__init__()
+
         self.cow_name = cow_name
         self.effector = effector
-        self.action = action
+        self.turn_on = turn_on
         self.reason = reason
+
+        self.conversation_id = str(uuid.uuid4())
 
         self.effector_jid = f"effector-{effector}-{cow_name}@xmpp_server"
         self.farmer_jid = "farmer@xmpp_server"
 
     async def run(self):
+
         await self.send_request()
 
-        reply = await self.wait_for_reply(timeout=10)
+        reply = await self.receive(timeout=10)
 
         if not reply:
             await self.inform_farmer("NO_RESPONSE")
@@ -136,10 +175,10 @@ class EffectorConversation(OneShotBehaviour):
             return
 
         if perf != "agree":
-            await self.inform_farmer("UNEXPECTED_REPLY", reply.body)
+            await self.inform_farmer("UNEXPECTED_REPLY", perf)
             return
 
-        final = await self.wait_for_reply(timeout=20)
+        final = await self.receive(timeout=20)
 
         if not final:
             await self.inform_farmer("NO_FINAL_RESPONSE")
@@ -150,20 +189,26 @@ class EffectorConversation(OneShotBehaviour):
         if final_perf == "failure":
             await self.inform_farmer("FAILURE", final.body)
 
-        elif final_perf in ("inform-done", "inform-result", "done"):
+        elif final_perf == "done":
             await self.inform_farmer("SUCCESS", final.body)
 
         else:
-            await self.inform_farmer("UNKNOWN_FINAL", final.body)
+            await self.inform_farmer("UNKNOWN_FINAL", final_perf)
 
+    def get_template(self):
+        template = Template()
+        template.sender = self.effector_jid
+        template.set_metadata("conversation-id", self.conversation_id)
+        return template
 
     async def send_request(self):
         msg = Message(to=self.effector_jid)
         msg.set_metadata("performative", "request")
+        msg.set_metadata("conversation-id", self.conversation_id)
 
         msg.body = json.dumps({
             "cow_name": self.cow_name,
-            "action": self.action,
+            "turn_on": self.turn_on,
             "reason": self.reason,
             "timestamp": datetime.utcnow().isoformat()
         })
@@ -171,22 +216,9 @@ class EffectorConversation(OneShotBehaviour):
         await self.send(msg)
 
         print(
-            f"[Conversation] REQUEST sent → {self.effector} "
-            f"(cow={self.cow_name})"
+            f"[Conversation {self.conversation_id}] REQUEST → {self.effector}"
         )
 
-
-    async def wait_for_reply(self, timeout):
-        msg = await self.receive(timeout=timeout)
-
-        if not msg:
-            return None
-
-        if str(msg.sender) != self.effector_jid:
-            return None
-
-        return msg
-    
 
     async def inform_farmer(self, status, details=None):
         msg = Message(to=self.farmer_jid)
@@ -198,16 +230,77 @@ class EffectorConversation(OneShotBehaviour):
             "status": status,
             "reason": self.reason,
             "details": details,
+            "conversation_id": self.conversation_id,
             "timestamp": datetime.utcnow().isoformat()
         })
 
         await self.send(msg)
 
         print(
-            f"[Conversation] INFORM farmer "
-            f"(cow={self.cow_name}, status={status})"
+            f"[Conversation {self.conversation_id}] INFORM farmer ({status})"
         )
 
+
+class PeriodicReportBehaviour(PeriodicBehaviour):
+
+    async def run(self):
+        report = self.build_report()
+
+        msg = Message(to="farmer@xmpp_server")
+        msg.set_metadata("performative", "inform")
+
+        msg.body = json.dumps({
+            "type": "PERIODIC_REPORT",
+            "timestamp": datetime.utcnow().isoformat(),
+            "report": report
+        })
+
+        await self.send(msg)
+
+        print("[Report] Periodic report sent to farmer")
+        print(f"[Report] {report}")
+
+    def build_report(self):
+        report = {}
+
+        now = datetime.utcnow()
+        window_start = now - timedelta(hours=6)
+
+        history = self.agent.data["cows"]["history"]
+
+        for cow_name, profiles in history.items():
+            recent = [
+                p for p in profiles
+                if datetime.fromisoformat(p["timestamp"]) >= window_start
+            ]
+
+            if not recent:
+                continue
+
+            def stats(values):
+                return {
+                    "last": values[-1],
+                    "avg": sum(values) / len(values),
+                    "min": min(values),
+                    "max": max(values),
+                }
+
+            temps = [p["sensors"]["temperature"] for p in recent]
+            phs   = [p["sensors"]["pH"] for p in recent]
+            acts  = [p["sensors"]["activity"] for p in recent]
+            pulses = [p["sensors"]["pulse"] for p in recent]
+
+            report[cow_name] = {
+                "temperature": stats(temps),
+                "pH": stats(phs),
+                "activity": stats(acts),
+                "pulse": stats(pulses),
+                "samples": len(recent),
+                "from": window_start.isoformat(),
+                "to": now.isoformat(),
+            }
+
+        return report
 
 
 class AnalysisRule:
@@ -227,12 +320,38 @@ class FeverAnalysis(AnalysisRule):
             for p in history[-HISTORY_DEPTH:]
         ]
 
-        if all(t > 39.0 for t in temps):
+        if all(t > 40.0 for t in temps):
             return {
                 "type": "EFFECTOR_REQUEST",
                 "cow_name": cow_name,
                 "effector": "sprinkler",
-                "reason": "fever"
+                "reason": "fever",
+                "turn_on": "True",
+                "details": f"Fever. Cow's temperature is {temps[-1]} deg Celsius."
+            }
+
+        return None
+
+class OverheatingAnalysis(AnalysisRule):
+    name = "OVERHEATING"
+
+    def analyze(self, cow_name, history):
+        if len(history) < HISTORY_DEPTH:
+            return None
+
+        temps = [
+            p["sensors"]["temperature"]
+            for p in history[-HISTORY_DEPTH:]
+        ]
+
+        if all(t > 39.0 for t in temps):
+            return {
+                "type": "EFFECTOR_REQUEST",
+                "cow_name": cow_name,
+                "effector": "fan",
+                "reason": "overheating",
+                "turn_on": "True",
+                "details": f"Overheating. Cow's temperature is {temps[-1]} deg Celsius"
             }
 
         return None
@@ -251,12 +370,14 @@ class StressAnalysis(AnalysisRule):
 
         activity = history[-1]["sensors"]["activity"]
 
-        if sum(pulses) / len(pulses) > 90 and activity > 200:
+        if sum(pulses) / len(pulses) > 90 and activity > 0.2:
             return {
                 "type": "EFFECTOR_REQUEST",
                 "cow_name": cow_name,
                 "effector": "brush",
-                "reason": "stress"
+                "reason": "stress",
+                "turn_on": "True",
+                "details": f"Stress. Cow's pulse: {pulses[-1]} and activity: {activity} are high."
             }
 
         return None
@@ -271,12 +392,14 @@ class HungerAnalysis(AnalysisRule):
         ph = history[-1]["sensors"]["pH"]
         activity = history[-1]["sensors"]["activity"]
 
-        if ph < 6.0 and activity < 200:
+        if ph < 6.0 and activity > 0.2:
             return {
                 "type": "EFFECTOR_REQUEST",
                 "cow_name": cow_name,
                 "effector": "feeder",
-                "reason": "hunger"
+                "reason": "hunger",
+                "turn_on": "True",
+                "details": f"The cow is probably hungry. Cow's ph: {ph} and activity: {activity} are low."
             }
 
         return None
