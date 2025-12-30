@@ -1,7 +1,7 @@
 import spade
 
 from agents.cows_analizer import CowsAnalyzer
-from spatial_analysis.spatial_analizer import SpatialAnalyzer
+from spatial_analysis.agents.spatial_analizer import SpatialAnalyzer
 
 async def main():
     
