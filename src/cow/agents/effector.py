@@ -46,6 +46,7 @@ class Effector(Agent):
                 "conversation-id",
                 self.message.get_metadata("conversation-id")
             )
+            print(f"[Efektor refuse {reply}")
             await self.send(reply)
 
 
@@ -61,6 +62,8 @@ class Effector(Agent):
                 "conversation-id",
                 self.message.get_metadata("conversation-id")
             )
+            print(f"[Efektor accept] {reply}")
+            print(f"[Efektor accept do kogo] {self.message.sender}")
             await self.send(reply)
 
     
@@ -76,6 +79,7 @@ class Effector(Agent):
                 "conversation-id",
                 self.message.get_metadata("conversation-id")
             )
+            print(f"[Efektor failure] {reply}")
             await self.send(reply)
 
 
@@ -95,6 +99,7 @@ class Effector(Agent):
                 "conversation-id",
                 self.message.get_metadata("conversation-id")
             )
+            print(f"[Efektor success] {reply}")
             await self.send(reply)
 
 

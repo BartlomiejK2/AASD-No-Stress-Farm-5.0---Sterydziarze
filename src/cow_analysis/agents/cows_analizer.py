@@ -26,27 +26,51 @@ class CowsAnalyzer(Agent):
             }
         }
         self.events = asyncio.Queue()
+        self.profile_queue = asyncio.Queue()     # wiadomości od agregatorów
+        self.effector_queue = asyncio.Queue() 
+        self.conversations = {} 
 
-    class AwaitProfilesBehavoiur(CyclicBehaviour):
+    class MessageRouterBehaviour(CyclicBehaviour):
         async def run(self):
-            message = await self.receive(timeout=10)
-            if not message:
-                return
-            
-            sender = str(message.sender)
-
-            if not sender.startswith("aggregator-"):
+            msg = await self.receive(timeout=10)
+            if not msg:
                 return
 
-            if message.get_metadata("performative") != "inform":
+            sender = str(msg.sender)
+            perf = msg.get_metadata("performative")
+
+            if sender.startswith("aggregator-") and perf == "inform":
+                await self.agent.profile_queue.put(msg)
                 return
 
-            message_data = json.loads(message.body)
-            await self.agent.save_profile(message_data)
+            if perf in ("agree", "refuse", "done", "failure"):
+                await self.agent.effector_queue.put(msg)
+                return
 
-            # print(f"Message {message_data}")
-        
-    class AnalyzeProfiles(CyclicBehaviour):
+            print("[Router] Ignored message:", msg)
+
+    class ProfileConsumerBehaviour(CyclicBehaviour):
+        async def run(self):
+            msg = await self.agent.profile_queue.get()
+
+            data = json.loads(msg.body)
+            await self.agent.save_profile(data)
+
+
+    async def save_profile(self, message_data):
+        for cow_name, sensors in message_data.items():
+            profile = {
+                "timestamp": datetime.utcnow().isoformat(),
+                "sensors": sensors
+            }
+            self.data["cows"]["current"][cow_name] = profile
+            self.data["cows"]["history"].setdefault(cow_name, []).append(profile)
+            await self.events.put({
+                "type": "PROFILE_UPDATED",
+                "cow_name": cow_name
+                })    
+    
+    class AnalyzeProfilesBehaviour(CyclicBehaviour):
         async def on_start(self):
             self.rules = [
                 FeverAnalysis(),
@@ -91,23 +115,9 @@ class CowsAnalyzer(Agent):
             )
 
 
-            t_agree = Template(sender=conversation.effector_jid)
-            t_agree.set_metadata("conversation-id", conversation.conversation_id)
-            t_agree.set_metadata("performative", "agree")
-
-            t_refuse = Template(sender=conversation.effector_jid)
-            t_refuse.set_metadata("conversation-id", conversation.conversation_id)
-            t_refuse.set_metadata("performative", "refuse")
-
-            t_done = Template(sender=conversation.effector_jid)
-            t_done.set_metadata("conversation-id", conversation.conversation_id)
-            t_done.set_metadata("performative", "done")
-
-            t_failure = Template(sender=conversation.effector_jid)
-            t_failure.set_metadata("conversation-id", conversation.conversation_id)
-            t_failure.set_metadata("performative", "failure")
-
-            template = t_agree | t_refuse | t_done | t_failure
+            template = Template()
+            template.sender = conversation.effector_jid
+            template.set_metadata("conversation-id", conversation.conversation_id)
 
             self.agent.add_behaviour(conversation, template)
 
@@ -117,31 +127,75 @@ class CowsAnalyzer(Agent):
                 f"(cow={cow_name}, effector={effector}, reason={reason})"
             )
 
+    class EffectorResponseHandler(CyclicBehaviour):
+        async def run(self):
+            msg = await self.agent.effector_queue.get()
+
+            perf = msg.get_metadata("performative")
+            cid = msg.get_metadata("conversation-id")
+
+            if not cid:
+                print("[EffectorHandler] No conversation-id, ignored")
+                return
+
+            conversation = self.agent.conversations.get(cid)
+            if not conversation:
+                print(f"[EffectorHandler] Unknown conversation {cid}")
+                return
+
+            print(
+                f"[EffectorHandler] {perf.upper()} "
+                f"(cow={conversation['cow_name']}, "
+                f"effector={conversation['effector']})"
+            )
+
+            if perf == "agree":
+                return
+
+            if perf == "refuse":
+                await self.inform_farmer(conversation, "REFUSED")
+                self.finish(cid)
+                return
+
+            if perf == "done":
+                await self.inform_farmer(conversation, "SUCCESS", msg.body)
+                self.finish(cid)
+                return
+
+            if perf == "failure":
+                await self.inform_farmer(conversation, "FAILURE", msg.body)
+                self.finish(cid)
+                return
 
 
-    async def save_profile(self, message_data):
-        for cow_name, sensors in message_data.items():
-            profile = {
-                "timestamp": datetime.utcnow().isoformat(),
-                "sensors": sensors
-            }
-            self.data["cows"]["current"][cow_name] = profile
-            self.data["cows"]["history"].setdefault(cow_name, []).append(profile)
-            await self.events.put({
-                "type": "PROFILE_UPDATED",
-                "cow_name": cow_name
-                })
+        async def inform_farmer(self, conversation, status, details=None):
+            msg = Message(to="farmer@xmpp_server")
+            msg.set_metadata("performative", "inform")
+
+            msg.body = json.dumps({
+                "cow_name": conversation["cow_name"],
+                "effector": conversation["effector"],
+                "status": status,
+                "reason": conversation["reason"],
+                "details": details,
+                "timestamp": datetime.utcnow().isoformat()
+            })
+
+            await self.send(msg)
+
+            print(
+                f"[Farmer] cow={conversation['cow_name']} "
+                f"effector={conversation['effector']} "
+                f"status={status}"
+            )
 
     async def setup(self) -> None:
-        template = Template()
-        # template.sender = "aggregator-*@xmpp_server"
-        template.set_metadata("performative", "inform")
+        self.add_behaviour(self.MessageRouterBehaviour())
+        self.add_behaviour(self.ProfileConsumerBehaviour())
+        self.add_behaviour(self.AnalyzeProfilesBehaviour())
+        self.add_behaviour(self.EffectorResponseHandler())
+        self.add_behaviour(PeriodicReportBehaviour(period=15))
 
-        self.add_behaviour(self.AwaitProfilesBehavoiur(), template)
-        self.add_behaviour(self.AnalyzeProfiles())
-        # report_behaviour = PeriodicReportBehaviour(period=21600)
-        report_behaviour = PeriodicReportBehaviour(period=10)
-        self.add_behaviour(report_behaviour)
 
 class EffectorConversation(OneShotBehaviour):
 
@@ -159,47 +213,16 @@ class EffectorConversation(OneShotBehaviour):
         self.farmer_jid = "farmer@xmpp_server"
 
     async def run(self):
-
+        self.agent.conversations[self.conversation_id] = {
+            "cow_name": self.cow_name,
+            "effector": self.effector,
+            "turn_on": self.turn_on,
+            "reason": self.reason,
+            "started_at": datetime.utcnow().isoformat()
+        }
         await self.send_request()
 
-        reply = await self.receive(timeout=10)
 
-        if not reply:
-            await self.inform_farmer("NO_RESPONSE")
-            return
-
-        perf = reply.get_metadata("performative")
-
-        if perf == "refuse":
-            await self.inform_farmer("REFUSED")
-            return
-
-        if perf != "agree":
-            await self.inform_farmer("UNEXPECTED_REPLY", perf)
-            return
-
-        final = await self.receive(timeout=20)
-
-        if not final:
-            await self.inform_farmer("NO_FINAL_RESPONSE")
-            return
-
-        final_perf = final.get_metadata("performative")
-
-        if final_perf == "failure":
-            await self.inform_farmer("FAILURE", final.body)
-
-        elif final_perf == "done":
-            await self.inform_farmer("SUCCESS", final.body)
-
-        else:
-            await self.inform_farmer("UNKNOWN_FINAL", final_perf)
-
-    def get_template(self):
-        template = Template()
-        template.sender = self.effector_jid
-        template.set_metadata("conversation-id", self.conversation_id)
-        return template
 
     async def send_request(self):
         msg = Message(to=self.effector_jid)
@@ -218,28 +241,6 @@ class EffectorConversation(OneShotBehaviour):
         print(
             f"[Conversation {self.conversation_id}] REQUEST → {self.effector}"
         )
-
-
-    async def inform_farmer(self, status, details=None):
-        msg = Message(to=self.farmer_jid)
-        msg.set_metadata("performative", "inform")
-
-        msg.body = json.dumps({
-            "cow_name": self.cow_name,
-            "effector": self.effector,
-            "status": status,
-            "reason": self.reason,
-            "details": details,
-            "conversation_id": self.conversation_id,
-            "timestamp": datetime.utcnow().isoformat()
-        })
-
-        await self.send(msg)
-
-        print(
-            f"[Conversation {self.conversation_id}] INFORM farmer ({status})"
-        )
-
 
 class PeriodicReportBehaviour(PeriodicBehaviour):
 

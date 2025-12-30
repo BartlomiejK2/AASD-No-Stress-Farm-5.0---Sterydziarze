@@ -5,7 +5,7 @@ import time
 from spade.agent import Agent
 from spade.behaviour import CyclicBehaviour
 from spade.behaviour import OneShotBehaviour
-
+import uuid
 from spade.message import Message
 from spade.template import Template
 from spade.behaviour import PeriodicBehaviour
@@ -20,33 +20,57 @@ class SpatialAnalyzer(Agent):
     def __init__(self):
         super().__init__(f"spacial-analyzer@xmpp_server", os.getenv("PASSWORD"))
         self.data = {
-            "room_part": {
+            "room_parts": {
                 "current": {},
                 "history": {}
             }
         }
         self.events = asyncio.Queue()
+        self.profile_queue = asyncio.Queue()     # wiadomości od agregatorów
+        self.effector_queue = asyncio.Queue() 
+        self.conversations = {} 
 
-    class AwaitProfilesBehavoiur(CyclicBehaviour):
+    class MessageRouterBehaviour(CyclicBehaviour):
         async def run(self):
-            message = await self.receive(timeout=10)
-            if not message:
-                return
-            
-            sender = str(message.sender)
-
-            if not sender.startswith("aggregator-"):
+            msg = await self.receive(timeout=10)
+            if not msg:
                 return
 
-            if message.get_metadata("performative") != "inform":
+            sender = str(msg.sender)
+            perf = msg.get_metadata("performative")
+
+            if sender.startswith("aggregator-") and perf == "inform":
+                await self.agent.profile_queue.put(msg)
                 return
 
-            message_data = json.loads(message.body)
-            await self.agent.save_profile(message_data)
+            if perf in ("agree", "refuse", "done", "failure"):
+                await self.agent.effector_queue.put(msg)
+                return
 
-            # print(f"Message {message_data}")
-        
-    class AnalyzeProfiles(CyclicBehaviour):
+            print("[Router] Ignored message:", msg)
+
+    class ProfileConsumerBehaviour(CyclicBehaviour):
+        async def run(self):
+            msg = await self.agent.profile_queue.get()
+
+            data = json.loads(msg.body)
+            await self.agent.save_profile(data)
+
+
+    async def save_profile(self, message_data):
+        for room_part_name, sensors in message_data.items():
+            profile = {
+                "timestamp": datetime.utcnow().isoformat(),
+                "sensors": sensors
+            }
+            self.data["room_parts"]["current"][room_part_name] = profile
+            self.data["room_parts"]["history"].setdefault(room_part_name, []).append(profile)
+            await self.events.put({
+                "type": "PROFILE_UPDATED",
+                "room_part_name": room_part_name
+                })    
+    
+    class AnalyzeProfilesBehaviour(CyclicBehaviour):
         async def on_start(self):
             self.rules = [
                 TemperatureAnalysis(),
@@ -68,7 +92,7 @@ class SpatialAnalyzer(Agent):
 
         async def handle_profile_update(self, event):
             room_part_name = event["room_part_name"]
-            history = self.agent.data["room_part"]["history"].get(room_part_name, [])
+            history = self.agent.data["room_parts"]["history"].get(room_part_name, [])
 
             for rule in self.rules:
                 result = rule.analyze(room_part_name, history)
@@ -88,140 +112,134 @@ class SpatialAnalyzer(Agent):
                 reason=reason
             )
 
-            self.agent.add_behaviour(conversation)
+
+            template = Template()
+            template.sender = conversation.effector_jid
+            template.set_metadata("conversation-id", conversation.conversation_id)
+
+            self.agent.add_behaviour(conversation, template)
+
 
             print(
                 f"[Analyzer] EffectorConversation started "
                 f"(room_part={room_part_name}, effector={effector}, reason={reason})"
             )
 
+    class EffectorResponseHandler(CyclicBehaviour):
+        async def run(self):
+            msg = await self.agent.effector_queue.get()
+
+            perf = msg.get_metadata("performative")
+            cid = msg.get_metadata("conversation-id")
+
+            if not cid:
+                print("[EffectorHandler] No conversation-id, ignored")
+                return
+
+            conversation = self.agent.conversations.get(cid)
+            if not conversation:
+                print(f"[EffectorHandler] Unknown conversation {cid}")
+                return
+
+            print(
+                f"[EffectorHandler] {perf.upper()} "
+                f"(room_part={conversation['room_part_name']}, "
+                f"effector={conversation['effector']})"
+            )
+
+            if perf == "agree":
+                return
+
+            if perf == "refuse":
+                await self.inform_farmer(conversation, "REFUSED")
+                self.finish(cid)
+                return
+
+            if perf == "done":
+                await self.inform_farmer(conversation, "SUCCESS", msg.body)
+                self.finish(cid)
+                return
+
+            if perf == "failure":
+                await self.inform_farmer(conversation, "FAILURE", msg.body)
+                self.finish(cid)
+                return
 
 
-    async def save_profile(self, message_data):
-        for room_part_name, sensors in message_data.items():
-            profile = {
-                "timestamp": datetime.utcnow().isoformat(),
-                "sensors": sensors
-            }
-            self.data["room_part"]["current"][room_part_name] = profile
-            self.data["room_part"]["history"].setdefault(room_part_name, []).append(profile)
-            await self.events.put({
-                "type": "PROFILE_UPDATED",
-                "room_part_name": room_part_name
-                })
+        async def inform_farmer(self, conversation, status, details=None):
+            msg = Message(to="farmer@xmpp_server")
+            msg.set_metadata("performative", "inform")
+
+            msg.body = json.dumps({
+                "room_part_name": conversation["room_part_name"],
+                "effector": conversation["effector"],
+                "status": status,
+                "reason": conversation["reason"],
+                "details": details,
+                "timestamp": datetime.utcnow().isoformat()
+            })
+
+            await self.send(msg)
+
+            print(
+                f"[Farmer] room_part={conversation['room_part_name']} "
+                f"effector={conversation['effector']} "
+                f"status={status}"
+            )
 
     async def setup(self) -> None:
-        self.add_behaviour(self.AwaitProfilesBehavoiur())
-        self.add_behaviour(self.AnalyzeProfiles())
-        # report_behaviour = PeriodicReportBehaviour(period=21600)
-        report_behaviour = PeriodicReportBehaviour(period=10)
-        self.add_behaviour(report_behaviour)
+        self.add_behaviour(self.MessageRouterBehaviour())
+        self.add_behaviour(self.ProfileConsumerBehaviour())
+        self.add_behaviour(self.AnalyzeProfilesBehaviour())
+        self.add_behaviour(self.EffectorResponseHandler())
+        self.add_behaviour(PeriodicReportBehaviour(period=15))
+
 
 class EffectorConversation(OneShotBehaviour):
 
     def __init__(self, room_part_name, effector, turn_on, reason):
         super().__init__()
+
         self.room_part_name = room_part_name
         self.effector = effector
         self.turn_on = turn_on
         self.reason = reason
 
+        self.conversation_id = str(uuid.uuid4())
+
         self.effector_jid = f"effector-{effector}-{room_part_name}@xmpp_server"
         self.farmer_jid = "farmer@xmpp_server"
 
     async def run(self):
+        self.agent.conversations[self.conversation_id] = {
+            "room_part_name": self.room_part_name,
+            "effector": self.effector,
+            "turn_on": self.turn_on,
+            "reason": self.reason,
+            "started_at": datetime.utcnow().isoformat()
+        }
         await self.send_request()
 
-        reply = await self.wait_for_reply(timeout=10)
-
-        if not reply:
-            await self.inform_farmer("NO_RESPONSE")
-            return
-
-        perf = reply.get_metadata("performative")
-        print(f"[Answer] {reply}")
-        if perf == "refuse":
-            await self.inform_farmer("REFUSED")
-            return
-
-        if perf != "agree":
-            await self.inform_farmer("UNEXPECTED_REPLY", reply.body)
-            return
-
-        final = await self.wait_for_reply(timeout=20)
-
-        if not final:
-            await self.inform_farmer("NO_FINAL_RESPONSE")
-            return
-
-        final_perf = final.get_metadata("performative")
-        print(f"[Final] {perf}")
-        if final_perf == "failure":
-            await self.inform_farmer("FAILURE", final.body)
-
-        elif final_perf in ("inform-done", "inform-result", "done"):
-            await self.inform_farmer("SUCCESS", final.body)
-
-        else:
-            await self.inform_farmer("UNKNOWN_FINAL", final.body)
 
 
     async def send_request(self):
         msg = Message(to=self.effector_jid)
         msg.set_metadata("performative", "request")
+        msg.set_metadata("conversation-id", self.conversation_id)
 
         msg.body = json.dumps({
             "room_part_name": self.room_part_name,
             "turn_on": self.turn_on,
-        })
-
-        await self.send(msg)
-
-        print(
-            f"[Conversation {self.room_part_name}] REQUEST sent → {self.effector} "
-        )
-
-    async def wait_for_reply(self, timeout):
-        deadline = time.monotonic() + timeout
-
-        while time.monotonic() < deadline:
-            msg = await self.receive(timeout=1)
-
-            if not msg:
-                continue
-
-            if str(msg.sender) != self.effector_jid:
-                continue
-
-            perf = msg.get_metadata("performative")
-            if perf not in ("agree", "refuse", "done", "failure"):
-                continue
-
-            return msg
-
-        return None
-
-    
-
-    async def inform_farmer(self, status, details=None):
-        msg = Message(to=self.farmer_jid)
-        msg.set_metadata("performative", "inform")
-
-        msg.body = json.dumps({
-            "room_part_name": self.room_part_name,
-            "effector": self.effector,
-            "status": status,
             "reason": self.reason,
-            "details": details,
             "timestamp": datetime.utcnow().isoformat()
         })
 
         await self.send(msg)
 
         print(
-            f"[Conversation] INFORM farmer "
-            f"(room_part={self.room_part_name}, status={status})"
+            f"[Conversation {self.conversation_id}] REQUEST → {self.effector}"
         )
+
 
 class PeriodicReportBehaviour(PeriodicBehaviour):
 
@@ -248,7 +266,7 @@ class PeriodicReportBehaviour(PeriodicBehaviour):
         now = datetime.utcnow()
         window_start = now - timedelta(hours=6)
 
-        history = self.agent.data["room_part"]["history"]
+        history = self.agent.data["room_parts"]["history"]
 
         for room_part_name, profiles in history.items():
             recent = [
