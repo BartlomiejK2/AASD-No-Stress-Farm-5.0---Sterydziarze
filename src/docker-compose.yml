@@ -32,7 +32,8 @@ services:
     build: ./spatial_analysis
     container_name: spatial_analyzer
     depends_on:
-      - xmpp_server
+      cow_analyzer:
+        condition: service_healthy
     environment:
       - NAME=spatial_analyzer
       - PASSWORD=secret
@@ -46,7 +47,7 @@ services:
     build: ./cow
     container_name: mucka
     depends_on:
-      cow_analyzer:
+      spatial_analyzer:
         condition: service_healthy
     environment:
       - NAME=mucka
