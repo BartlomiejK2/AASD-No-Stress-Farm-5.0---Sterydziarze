@@ -136,7 +136,7 @@ services:
     build: ./farmer
     container_name: farmer
     depends_on:
-      cow_analyzer:
+      obora2:
         condition: service_healthy
     environment:
       - PASSWORD=secret
