@@ -3,8 +3,8 @@ services:
     image: tigase/tigase-xmpp-server:8.0.0
     container_name: xmpp_server
     ports:
-      - "8480:8080"   # panel HTTP
-      - "5422:5222"   # XMPP na hosta, ale wewnątrz sieci dalej 5222
+      - "8480:8080"
+      - "5422:5222"
     environment:
       - DB_ROOT_USER=admin
       - DB_ROOT_PASS=admin
@@ -131,3 +131,19 @@ services:
       interval: 3s
       timeout: 2s
       retries: 20
+
+  farmer:
+    build: ./farmer
+    container_name: farmer
+    depends_on:
+      cow_analyzer:
+        condition: service_healthy
+    environment:
+      - PASSWORD=secret
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/agent_ready"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+
