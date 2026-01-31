@@ -45,9 +45,11 @@ class Aggregator(Agent):
         self.add_behaviour(behaviour)
 
     def aggregate_data(self, data):
-        self.data |= data
-        if self.is_profile_ready():
-            self.forward_profile()
+        for key, value in data.items():
+            if key in ['temperature', 'humidity']:
+                self.data |= {key: value}
+                if self.is_profile_ready():
+                    self.forward_profile()
 
     def is_profile_ready(self):
         return all(key in self.data.keys() for key in ('temperature', 'humidity'))

@@ -1,15 +1,7 @@
 import json
-import os
 from random import uniform
-from time import sleep
-
-from spade.agent import Agent
-from spade.behaviour import CyclicBehaviour, OneShotBehaviour
-from spade.message import Message
 
 from copy import deepcopy
-
-
 class EffectorTest:
     def __init__(self, sender, succes_rate):
         self.free = True
