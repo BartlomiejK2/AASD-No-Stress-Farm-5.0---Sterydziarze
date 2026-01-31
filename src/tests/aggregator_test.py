@@ -35,7 +35,8 @@ class AggregatorTest():
     def aggregate_data(self, data):
         for key, value in data.items():
             if key in ['temperature', 'humidity']:
-                self.data |= {key: value}
+                if key in self.data.keys(): self.data[key] = value
+                else: self.data |= {key: value}
                 if self.is_profile_ready():
                     self.forward_profile()
 
@@ -49,6 +50,7 @@ class AggregatorTest():
         }
         self.ForwardProfile(profile={self.space_name: data_to_send}, 
                                         sender=self.send).run()
+        self.data = {}
 
 
 class FakeMessage:
@@ -77,7 +79,7 @@ def test_aggregator_profile_not_ready():
     assert 0 == mock.call_count
     assert aggregator.is_profile_ready() == False
 
-def test_aggregator_profile_ready():
+def test_aggregator_profile_send():
     mock = Mock()
     aggregator = AggregatorTest(mock)
     temperature_message = FakeMessage(body=json.dumps({"temperature": 10.0}))
@@ -86,7 +88,7 @@ def test_aggregator_profile_ready():
     aggregator.test_request(humidity_message)
 
     assert 1 == mock.call_count
-    assert aggregator.is_profile_ready() == True
+    assert aggregator.is_profile_ready() == False
 
     message = mock.call_args_list[0][0][0]
     data = json.loads(message.body)["test_aggregator"]
@@ -94,6 +96,43 @@ def test_aggregator_profile_ready():
     assert data['position_y'] == 1.5
     assert data["temperature"] == 10.0
     assert data["humidity"] == 15.0
+    assert message.get_metadata("performative") == "inform"
+
+def test_aggregator_profile_send_twice():
+    mock = Mock()
+    aggregator = AggregatorTest(mock)
+    temperature_message = FakeMessage(body=json.dumps({"temperature": 10.0}))
+    humidity_message = FakeMessage(body=json.dumps({"humidity": 15.0}))
+    aggregator.test_request(temperature_message)
+    aggregator.test_request(humidity_message)
+
+    assert 1 == mock.call_count
+    assert aggregator.is_profile_ready() == False
+
+    message = mock.call_args_list[0][0][0]
+    data = json.loads(message.body)["test_aggregator"]
+    assert data['position_x'] == 1.0
+    assert data['position_y'] == 1.5
+    assert data["temperature"] == 10.0
+    assert data["humidity"] == 15.0
+    assert message.get_metadata("performative") == "inform"
+
+    temperature_message = FakeMessage(body=json.dumps({"temperature": 20.0}))
+    temperature_message_new = FakeMessage(body=json.dumps({"temperature": 25.0}))
+    humidity_message = FakeMessage(body=json.dumps({"humidity": 7.0}))
+    aggregator.test_request(temperature_message)
+    aggregator.test_request(temperature_message_new)
+    aggregator.test_request(humidity_message)
+
+    assert 2 == mock.call_count
+    assert aggregator.is_profile_ready() == False
+
+    message = mock.call_args_list[1][0][0]
+    data = json.loads(message.body)["test_aggregator"]
+    assert data['position_x'] == 1.0
+    assert data['position_y'] == 1.5
+    assert data["temperature"] == 25.0
+    assert data["humidity"] == 7.0
     assert message.get_metadata("performative") == "inform"
 
 def test_aggregator_false_message():

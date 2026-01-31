@@ -47,7 +47,8 @@ class Aggregator(Agent):
     def aggregate_data(self, data):
         for key, value in data.items():
             if key in ['temperature', 'humidity']:
-                self.data |= {key: value}
+                if key in self.data.keys(): self.data[key] = value
+                else: self.data |= {key: value}
                 if self.is_profile_ready():
                     self.forward_profile()
 
