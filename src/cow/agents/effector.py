@@ -7,6 +7,8 @@ from spade.agent import Agent
 from spade.behaviour import CyclicBehaviour, OneShotBehaviour
 from spade.message import Message
 
+from copy import deepcopy
+
 
 class Effector(Agent):
     def __init__(self, type: str):
@@ -27,50 +29,67 @@ class Effector(Agent):
             message = await self.receive(timeout=10)
 
             if message:
-                self.callback(message)
+                if message.get_metadata("performative") != "request":
+                    return
+                print(f"[{self.jid}]: Received request from {message.sender}")
+                self.callback(deepcopy(message))
             else:
                 print(f"[{self.jid}]: Did not received any request")
 
     class RefuseRequest(OneShotBehaviour):
-        def __init__(self, message):
+        def __init__(self, message, jid):
             super().__init__()
             self.message = message
+            self.jid = jid
 
         async def run(self):
-            message = Message(to = message.sender, body="")
-            message.set_metadata("performative", "refuse")
-            await self.send(message)
+            reply = self.message.make_reply()
+            reply.set_metadata("performative", "refuse")
+            print(f"[{self.jid}] refuse {reply}")
+            await self.send(reply)
+
 
     class AcceptRequest(OneShotBehaviour):
-        def __init__(self, message):
+        def __init__(self, message, jid):
             super().__init__()
             self.message = message
+            self.jid = jid
 
         async def run(self):
-            message = Message(to = message.sender, body="")
-            message.set_metadata("performative", "agree")
-            await self.send(message)
+            reply = self.message.make_reply()
+            reply.set_metadata("performative", "agree")
+            print(f"[{self.jid}]: accept {reply}")
+            print(f"[{self.jid}]: accept from {self.message.sender}")
+            await self.send(reply)
+
     
     class FailureInform(OneShotBehaviour):
-        def __init__(self, message):
+        def __init__(self, message, jid):
             super().__init__()
             self.message = message
+            self.jid = jid
 
         async def run(self):
-            message = Message(to = message.sender, body="")
-            message.set_metadata("performative", "failure")
-            await self.send(message)
+            reply = self.message.make_reply()
+            reply.set_metadata("performative", "failure")
+            print(f"[{self.jid}]: failure {reply}")
+            await self.send(reply)
+
 
     class SuccessDataInform(OneShotBehaviour):
-        def __init__(self, message, data):
+        def __init__(self, message, data, jid):
             super().__init__()
             self.message = message
             self.data = data
+            self.jid = jid
 
         async def run(self):
-            message = Message(to = message.sender, body = json.dumps(self.data))
-            message.set_metadata("performative", "done")
-            await self.send(message)
+            reply = self.message.make_reply()
+            reply.set_metadata("performative", "done")
+            reply.body = json.dumps(self.data)
+            print(f"[{self.jid}]: success {reply}")
+            await self.send(reply)
+
 
     class ActionRunner(OneShotBehaviour):
         def __init__(self, message, take_action, sleep_time):
@@ -80,28 +99,32 @@ class Effector(Agent):
             self.sleep_time = sleep_time
 
         async def run(self):
-           self.take_action(json.loads(self.message.body))
            sleep(self.sleep_time)
+           self.take_action(json.loads(self.message.body))
 
     def refuse(self, message):
-        behaviour = self.RefuseRequest(message)
+        behaviour = self.RefuseRequest(message, self.jid)
         self.add_behaviour(behaviour)
 
     def accept(self, message):
-        behaviour = self.AcceptRequest(message)
+        behaviour = self.AcceptRequest(message, self.jid)
         self.add_behaviour(behaviour)
 
     def fail(self, message):
-        behaviour = self.FailureInform(message)
+        behaviour = self.FailureInform(message, self.jid)
         self.add_behaviour(behaviour)
     
     def done(self, message):
-        behaviour = self.SuccessDataInform(message, self.value)
+        behaviour = self.SuccessDataInform(message, self.value, self.jid)
         self.add_behaviour(behaviour)
 
     def run_action(self, message, take_action, sleep_time):
-        behaviour = self.ActionRunner(message, take_action, sleep_time)
-        self.add_behaviour(behaviour)
+        if uniform(0.0, 1.0) < self.succes_rate:
+            behaviour = self.ActionRunner(message, take_action, sleep_time)
+            self.add_behaviour(behaviour)
+            return True
+        else:
+            return False
 
     def callback(self, message):
         if not self.free:
@@ -112,16 +135,12 @@ class Effector(Agent):
             if self.run_action(message, self.action, self.sleep_time):
                 self.done(message)
             else:
-                self.fail()
-        self.free = True
+                self.fail(message)
 
     def action(self, body):
-        if uniform(0.0, 1.0) > self.succes_rate:
-            self.action_impl(body)
-            return True
-        else:
-            return False
-        
+        self.action_impl(body)
+        self.free = True
+ 
     async def setup(self):
         behaviour = self.GetRequest(callback = self.callback, jid = self.jid)
         self.add_behaviour(behaviour)

@@ -3,8 +3,8 @@ services:
     image: tigase/tigase-xmpp-server:8.0.0
     container_name: xmpp_server
     ports:
-      - "8480:8080"   # panel HTTP
-      - "5422:5222"   # XMPP na hosta, ale wewnątrz sieci dalej 5222
+      - "8480:8080"
+      - "5422:5222"
     environment:
       - DB_ROOT_USER=admin
       - DB_ROOT_PASS=admin
@@ -14,12 +14,28 @@ services:
       - ./tigase/config/tigase.conf:/home/tigase/tigase-server/etc/tigase.conf
       - ./tigase/config/config.tdsl:/home/tigase/tigase-server/etc/config.tdsl
 
-  analyzer:
-    build: ./analysis
-    container_name: analyzer
+  cow_analyzer:
+    build: ./cow_analysis
+    container_name: cow_analyzer
     depends_on:
       - xmpp_server
     environment:
+      - NAME=cow_analyzer
+      - PASSWORD=secret
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/agent_ready"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  spatial_analyzer:
+    build: ./spatial_analysis
+    container_name: spatial_analyzer
+    depends_on:
+      cow_analyzer:
+        condition: service_healthy
+    environment:
+      - NAME=spatial_analyzer
       - PASSWORD=secret
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/agent_ready"]
@@ -31,7 +47,7 @@ services:
     build: ./cow
     container_name: mucka
     depends_on:
-      analyzer:
+      spatial_analyzer:
         condition: service_healthy
     environment:
       - NAME=mucka
@@ -115,3 +131,19 @@ services:
       interval: 3s
       timeout: 2s
       retries: 20
+
+  farmer:
+    build: ./farmer
+    container_name: farmer
+    depends_on:
+      obora2:
+        condition: service_healthy
+    environment:
+      - PASSWORD=secret
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/agent_ready"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+
