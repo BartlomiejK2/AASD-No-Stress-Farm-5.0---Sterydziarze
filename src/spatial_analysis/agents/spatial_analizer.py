@@ -46,6 +46,23 @@ class SpatialAnalyzer(Agent):
             if perf in ("agree", "refuse", "done", "failure"):
                 await self.agent.effector_queue.put(msg)
                 return
+            # Farmer -> Analyzer (sterowanie efektorem)
+            if sender.startswith("farmer@") and perf in ("request", "inform"):
+                try:
+                    payload = json.loads(msg.body)
+                except Exception:
+                    return
+
+                if payload.get("type") == "FARMER_EFFECTOR_REQUEST":
+                    await self.agent.events.put({
+                        "type": "EFFECTOR_REQUEST",
+                        "room_part_name": payload["room_part_name"],
+                        "effector": payload["effector"],
+                        "turn_on": payload.get("turn_on"),
+                        "reason": payload.get("reason", "farmer_request")
+                    })
+                    print("[SpatialAnalyzer] FARMER_EFFECTOR_REQUEST queued")
+                    return
 
             print("[Router] Ignored message:", msg)
 
