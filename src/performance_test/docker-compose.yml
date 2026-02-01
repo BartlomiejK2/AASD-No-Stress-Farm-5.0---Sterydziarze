@@ -1,0 +1,95 @@
+version: "3.9"
+
+services:
+  xmpp_server:
+    image: tigase/tigase-xmpp-server:8.0.0
+    ports:
+      - "8480:8080"
+      - "5422:5222"
+    environment:
+      - DB_ROOT_USER=admin
+      - DB_ROOT_PASS=admin
+      - ADMIN_JID=admin@localhost
+      - ADMIN_PASSWORD=admin
+    volumes:
+      - ../tigase/config/tigase.conf:/home/tigase/tigase-server/etc/tigase.conf
+      - ../tigase/config/config.tdsl:/home/tigase/tigase-server/etc/config.tdsl
+
+  cow_analyzer:
+    build: ../cow_analysis
+    depends_on:
+      - xmpp_server
+    environment:
+      - NAME=cow_analyzer
+      - PASSWORD=secret
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/agent_ready"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+      start_period: 120s
+
+  spatial_analyzer:
+    build: ../spatial_analysis
+    depends_on:
+      - xmpp_server
+    environment:
+      - NAME=spatial_analyzer
+      - PASSWORD=secret
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/agent_ready"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+      start_period: 120s
+
+  cow:
+    build: ../cow
+    depends_on:
+      cow_analyzer:
+        condition: service_healthy
+    environment:
+      - PASSWORD=secret
+      - SUCCES_RATE=0.8
+      - SLEEP_TIME=2.5
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/agent_ready"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  obora1:
+    build: ../space
+    depends_on:
+      spatial_analyzer:
+        condition: service_healthy
+    environment:
+      - PASSWORD=secret
+      - NAME=obora1
+      - POSITION_X=0
+      - POSITION_Y=0
+      - SUCCES_RATE=0.8
+      - SLEEP_TIME=2.5
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/agent_ready"]
+      interval: 5s
+      timeout: 2s
+      retries: 120
+
+  obora2:
+    build: ../space
+    depends_on:
+      spatial_analyzer:
+        condition: service_healthy
+    environment:
+      - PASSWORD=secret
+      - NAME=obora2
+      - POSITION_X=10
+      - POSITION_Y=10
+      - SUCCES_RATE=0.8
+      - SLEEP_TIME=2.5
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/agent_ready"]
+      interval: 5s
+      timeout: 2s
+      retries: 120

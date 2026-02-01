@@ -171,17 +171,13 @@ class CowsAnalyzer(Agent):
 
             if perf == "refuse":
                 await self.inform_farmer(conversation, "REFUSED")
-                self.finish(cid)
                 return
 
             if perf == "done":
-                await self.inform_farmer(conversation, "SUCCESS", msg.body)
-                self.finish(cid)
                 return
 
             if perf == "failure":
                 await self.inform_farmer(conversation, "FAILURE", msg.body)
-                self.finish(cid)
                 return
 
 
